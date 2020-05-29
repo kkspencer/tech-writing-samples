@@ -1,0 +1,462 @@
+[Cue](https://cuelang.org/) is a general-purpose, strongly-typed constraint-based language. 
+
+In Cue, there is no distinction between _types_ and _values_. Specifically, _types_ are _values_.
+
+Further, _values_ are organized around the concept of a [_value lattice_](#the-value-lattice).
+
+???+ info "Content"
+    - [values](#the-value-lattice)
+    - [ordering constraints](#ordering-constraints)
+    - [enforcing constraints](#enforcing-constraints)
+    - [practice with constraints](#applying-constraints-to-values)
+    - [working with structs](#working-with-structs)
+    - [working with references](#working-with-references)
+    - [authoring Cue schemas](#authoring-cue-schemas)
+
+
+## The Value Lattice
+A _value lattice_ defines the hierarchy of _values_ or _types_. By combining the relationship of _values_ in the _value lattice_, with defined [precedence rules](#ordering-constraints) on a set of constraint operators, Cue encourages simple constructs without sacrificing formal rigor.
+
+The _value lattice_ is a partially ordered set, in which every two elements have a unique least upper bound, and a greatest lower bound.
+
+![](images/cue-types.png)
+
+For every two elements, there is a unique instance of both elements that subsumes all other elements that are an instance of both elements.
+
+For example `42.0` is an instance of a `float`, and `7` is an instance of an `int`. Both `42.0` and `7` are instances of a `number`
+
+The _value lattice_ allows for constraints to be enforced, based on the relationship of _values_ within the lattice.
+
+At the top of the _value lattice_ is a single ancestor of all values, called _top_. It is denoted by `_`. Every _value_ in the lattice is an instance of _top_.
+
+At the bottom of the _value lattice_ is a single leaf, called _bottom_. It is denoted by `_|_`. A _bottom_ value usually indicates an error.
+
+
+### Values
+Beyond simple values such as `7`, `42.0`, `"hello"`, Cue provides _structs_ for building complex values. In Cue, `structs` are simply a mapping of labels to values. It is a set of elements (called _fields_), each of which has a name (called _label_), and a value
+
+The unique `struct`, with no field, `{}` is an instance of every struct. The fields in a `struct` may be required or optional.
+
+=== "Example Cue Struct"
+    ```json
+    {
+        a: 7, 
+        b:42.0, 
+        c: "hello"
+    }
+    ```
+
+**Atomic Values**
+
+Within the _value lattice_, an _atom_ is any _value_ whose only instances are itself and _bottom_, such as `null`, `true`, `42.0`
+
+**Concrete Values**
+
+In Cue, a value is _concrete_ if it is either an _atom_, or a `struct` whose field values recursively evaluate to _concrete_ values.
+
+**Null Value**
+
+The null value is represented with the keyword `null`. It has only one parent `top`, and one child `bottom`.
+
+**Boolean Value**
+
+The boolean value represents the set of Boolean truth values denoted by the keywords `true` and `false`.
+
+**Numeric Values**
+
+`int` and `float` values are distinct instances of the generic `number` value in Cue. `int` represents the set of all integer numbers. `float` represents the set of all decimal floating-point numbers.
+
+
+## Ordering Constraints
+While the _value lattice_ provides a hierarchy for defining the relationship between _values_, the precedence rules on constraint operators define the order in which constraints are applied to _values_ within the _value lattice_.
+
+=== "Order of constraint operators in increasing precedence"
+- `|`  => alternation
+- `()` => grouping
+- `[]` => option (0 or once)
+- `{}` => repetition (0 to n times)
+
+## Enforcing Constraints
+Given a _value lattice_ which defines the relationship between _values_ and a set of precedence rules for constraint operators, Cue employs two mechanisms to enforce constraints.
+
+### Unification
+
+=== "Unification"
+    The **unification** of _values_ `a` and `b` is defined as the greatest lower bound of `a` and `b` within the _value lattice_. Since Cue _values_ form a lattice, the unification of two Cue _values_ is always unique:
+
+    ```json
+    a & a = a
+    a & b = a  //where a is an instance of b
+    a & _|_ = _|_  //the unification of any value with bottom is always bottom
+    ```
+
+    Unifications are:
+    
+    - *commutative*[^1] (changing the order of the operands does not change the results)
+    - *associative*[^2] (the order in which the operations are performed does not matter as long as the sequence of the operands is not changed). 
+    
+    Thus, the order of evaluation is irrelevant.
+
+### Disjunction
+
+=== "Disjunction"
+    The **disjunction** of _values_ `a` and `b` is defined as the least upper bound of `a` and `b` within the _value lattice_. Since Cue _values_ form a lattice, the disjunction of two Cue _values_ is always unique:
+    
+    ```json
+    a | a = a
+    a | b = b //where a is an instance of b
+    a | _|_ = a //the disjunction of any value with bottom is always that value
+    _|_ | _|_ = _|_ //the disjunction of two bottom values is bottom
+    ```
+
+    Disjunctions are:
+
+    - *commutative*[^1](changing the order of the operands does not change the results) 
+    - *associative*[^2](the order in which the operations are performed does not matter as long as the sequence of the operands is not changed)
+    - *idempotent*[^3](can be applied multiple times without changing the result beyond the initial application)
+
+    A disjunction is normalized if there is no element `a` for which there is an element `b` such that `a` is an instance of `b`
+
+
+## Applying Constraints to Values
+Remember that the _value lattice_ is a partially ordered set, in which every two elements have a **unique least upper bound**, and a **greatest lower bound**.
+
+![](images/cue-value-lattice.png)
+
+> For every two elements there is a unique instance of both elements that subsumes all other elements that are an instance of both elements
+
+### Unification of Values with _top_
+Unifying any value `v` with top `_` results in `v` itself
+
+=== "Expression"
+    ```json
+    _ &  5       
+    _ &  _       
+    _ & _|_      
+    ```
+
+=== "Result"
+    ```json
+    5
+    _
+    _|_
+    ```
+
+### Disjunctions with default values
+Any element of a disjunction can be marked as a default by prefixing it with an asterisk `*`. Consequently, when an expression needs to be resolved for an operation other than unification or disjunction, non-starred elements are dropped in favor of starred ones, if the starred elements do not resolve to _bottom_.
+
+=== "Expression"
+    ```json
+    "tcp" | "udp"
+    *"tcp" | "udp"
+    float | *1
+    *string | 1.0
+    ```
+
+=== "Result"
+    ```json
+    "tcp" | "udp"
+    "tcp"
+    1
+    string
+    ```
+
+### Combining unifications and disjunctions with the operator precedence rules
+
+???+ info "Order of constraint operators in increasing precedence"
+    - `|`  => alternation
+    - `()` => grouping
+    - `[]` => option (0 or once)
+    - `{}` => repetition (0 to n times)
+
+=== "Expression"
+    `({a:1} | {b:2}) & {c:3}`
+
+=== "Result"
+    `{a:1, c:3} | {b:2, c:3}`
+
+!!! tip "Unification is commutative[^1] and associative[^2]"
+
+=== "Expression"
+    `(int | string) & "foo"`
+
+=== "Result"
+    `"foo"` // greatest lower bound
+
+===! "Expression"
+    `"tcp" | "udp"`
+
+=== "Result"
+    `"tcp" | "udp"` // disjunction with no default values
+
+===! "Expression"
+    - `*"tcp" | "udp"`
+    - `(*"tcp"|"udp") & ("udp"|*"tcp"`
+    - `(*"tcp"|"udp") & ("udp"|"tcp")`
+    - `(*"tcp"|"udp") & "tcp"`
+
+=== "Result"
+    `"tcp"` // default value and greatest lower bound
+
+===! "Expression"
+    `(*true | false) & bool`
+
+=== "Result"
+    `true` // default value and greatest lower bound
+
+
+## Working with Structs
+Because a `struct` is a set of elements (_fields_), each of which has a name (_label_), and a value, operations on `structs` are analogous to basic set operations.
+
+The unique `struct` (`{}`), with no field is an instance of every struct, just as the empty set is an instance of every set.
+
+Further, the fields in a `struct` may be required or optional.
+
+Given a [_value lattice_](#the-value-lattice), a set of [_ordering constraints_](#ordering-constraints) and the list of comparison operators below:
+
+```
+==    equal
+!=    not equal
+<     less
+<=    less or equal
+>     greater
+>=    greater or equal
+=~    matches regular expression
+!~    does not match regular expression
+```
+
+we can succinctly define the constraints to apply to set of values.
+
+=== "Expression"
+    `{a: >=1 & <=7} & {a: >=5 & <=9}` 
+    
+    which represents the concrete set operation
+
+    `{1,2,3,4,5,6,7} & {5,6,7,8,9}`
+
+=== "Result"
+    `{a: >=5 & <=7}` 
+    
+    which represents the concrete set
+
+    `{5,6,7}`
+
+===! "Expression"
+    `{a: 1} & {a: 2}`
+
+=== "Result"
+    `_|_` 
+    
+    which represents the greatest lower bound from unification
+
+
+For structs with optional fields, optional labels are defined with an expression to select all labels for which a given constraint should be applied.
+
+For example:
+
+> `["foo"]: bar ` where the square brackets holds a set of expressions to indicate the matching labels of an optional field
+
+
+In Cue, we use the syntactic shorthand `?` to indicate optional labels
+> `foo?: bar`
+
+???+ info "Declaring struct fields"
+    `struct` fields can be declared as either:
+
+    - _regular_ (using `:`) or 
+    - _definition_ (using `::`)
+
+    Whereas _regular_ fields are required to be concrete when emitting data, _definitions_ are not required to be concrete since they are not emitted as part of the model.
+
+
+=== "Example: struct with optional field"
+    Given the definition:
+
+    ```json
+    nameMap: [string]: { // optional field label
+        firstName: string
+        nickName:  *firstName | string // default to the resolved firstName
+    }
+    ```
+
+    `nameMap: hank: { firstName: "Hank" }`
+
+    nameMap defines an optional field set `[string]: { ... }`, which in this specific case is just `hank`, and unifies the associated constraint with the matched field
+
+    resolves to:
+
+    ```json
+    nameMap: hank: {
+        firstName: "Hank"
+        nickName:  "Hank"
+    }
+    ```
+
+???+ info "structs are _open_ by default"
+    Because `structs` are open to adding fields, instances of one struct may contain fields that are not defined in the struct.
+
+    This makes it easy to add fields, but could also lead to bugs.
+
+    **How do we resolve this?**
+
+    We can close the `struct` by adding an optional field with value `_|_` for all undefined fields, or by defining the struct with the `close` keyword
+
+    ```json
+    A: close({
+    field1: string
+    field2: string
+    })
+    ```
+
+    This makes it easy to declare instances of the `struct` where the fields can be validated (including spelling errors!)
+
+    ```json
+    A1: A & {
+    feild1: string
+    } // _|_ feild1 not defined for A
+    ```
+
+**Working with nested structs**
+`structs` may contain _fields_ whose _values_ are also `structs`.
+Cue provides a syntactic shorthand for defining `structs` with a _field_ whose _value_ is a `struct` with a single _field_.
+
+This may be written as a colon-separated sequence of the two _field_ names, followed by a colon and the value of that single _field_.
+
+=== "normally defined nested struct"
+    ```json
+    job: {
+        myTask: {
+            replicas: 2
+        }
+    }
+    ```
+
+=== "syntactic shorthand"
+    ```json
+    job: myTask: replicas: 2
+    ```
+
+
+## Working with References
+Cue provides a mechanism for referencing _fields_ in expressions such as:
+
+=== "struct with a referenced field"
+    ```json
+    a: {
+        place:    string
+        greeting: "Hello, \(place)!" // the referenced _field_ `place` interpolated with the _value_ expression for the `greeting` _field_
+    }
+    ```
+
+===! "unification with a concrete value"
+    ```json
+    b: a & { place: "world" }
+    c: a & { place: "you" }
+    ```
+
+===! "evaluation after unification"
+    ```json
+    d: b.greeting  // "Hello, world!"
+    e: c.greeting  // "Hello, you!"
+    ```
+
+## Authoring Cue schemas
+Though we have barely covered a fraction of Cue and its capabilities, we now know enough to author a simple, but practical Cue schema.
+
+If the idea of playing around with Cue seems more appealing than authoring a schema, then check out the [Cue Language Tutorials] (https://cuelang.org/docs/tutorials/)
+
+=== "Example Service Deployment Schema"
+    ```json
+    service: [ID=_]: { // the service name is derived from the template `[ID=_]` which matches any _value_ since every _value_ in the _value lattice_ is an instance of _top_ (`_`) 
+        apiVersion: "v1"
+        kind:       "Service"
+        metadata: {
+            name: ID // reference the value of `ID`
+            labels: {
+                app:       ID    // reference the value of `ID` by convention
+                domain:    "prod"  // always the same in the given files
+                component: string  // varies per directory // the field of a name component must be set to some string value
+            }
+        }
+        spec: {
+            // Any port has the following properties.
+            ports: [...{ // the ellipsis defines `ports` as an open struct since it defines _top_ (`_`) for all labels. This means we can have 1 or more ports defined here
+                port:       int
+                protocol:   *"TCP" | "UDP"      // use the `TCP` protocol by default if a protocol is not defined
+                name:       string | *"client" // use `client` as the default name for the port is a port name is not defined
+            }]
+        }
+    }
+    ```
+
+===! "Example Service Test Schema"
+    ```json
+    package roundtrip
+
+    import (
+        avroPkg "github.com/heetch/cue-schema/avro"
+    )
+
+    tests: [_]: roundTripTest // roundTripTest is an instance of a service test
+
+    tests: [name=_]: testName: name // the test name is derived from the template `[name=_]` which matches any _value_ since every _value_ in the _value lattice_ is an instance of _top_ (`_`)
+
+    roundTripTest :: { // define the roudTripTest
+        testName:    string
+        inSchema:    avro.Schema // avro schema defined in the avroPkg
+        outSchema?:  avro.Schema // optional output schema
+        extraSchemas?: [... avro.Schema] // optional field, with 1 or more schemas
+        goType:      *outSchema.name | string // default to the value of the `name` field defined in outSchema
+        goTypeBody?: string // optional
+        // generateError holds the error expected from invoking avrogo.
+        // If this is specified, there will be no generated test package.
+        generateError?: string // optional
+        inData?:        _ // optional, matches any _value_
+        outData?:       _ // optional, matches any _value_
+        expectError?: [errorKind]: string // optional, reference to the declaration of `errorKind` below, constrained to a `string` value
+        otherTests?: string // optional, constrained to a `string` value
+        subtests: [name=_]: { //the name of subtests derived from the template `[name=_]` which matches any _value_ since every _value_ in the _value lattice_ is an instance of _top_ (`_`) 
+            testName: name
+            inData:   _ // matches any _value_
+            outData:  _ // matches any _value_
+            expectError?: [errorKind]: string // optional, reference to the declaration of `errorKind` below, constrained to a `string` value
+        }
+        if inData != _|_ { // ensure the input data is valid (not an error value)
+            subtests: main: {
+                "inData":  inData
+                "outData": outData
+                if expectError != _|_ {
+                    "expectError": expectError
+                }
+            }
+        }
+    }
+
+    errorKind :: "unmarshal" | "marshal"
+    ```
+
+
+## Reference
+- [Cue Language Specification](https://cuelang.org/docs/references/spec/)
+- [Cue Language Tutorials](https://cuelang.org/docs/tutorials/)
+
+
+
+[^1]: **commutative**: `a` x `b` = `b` x `a` ; `a` + `b` = `b` + `a`
+[^2]: **associative**: (`a` + `b`) + `c` = `a` + (`b` + `c`) ; (`a` x `b`) x `c` = `a` x (`b` x `c`)
+[^3]: **idempotent**: `a` | `a` = `a`; `b` | `b` | `b` = `b`
+
+
+???+ tip "Need help?"
+
+    - Post your question on these Slack channels:
+      -  Dev Go Talk @ `#dev-go-talk`
+
+    **Did you find this page useful?**
+
+    :heart_eyes:󠀠󠀠 [**Yep!**](https://forms.gle/DPKLG2KpNnam79VNA)
+
+    :weary: [**No I did not**](https://forms.gle/DPKLG2KpNnam79VNA)
+
+
+**Maintained by:** Kelvin Spencer
