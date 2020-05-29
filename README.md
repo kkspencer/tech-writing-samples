@@ -1,2 +1,3 @@
-# work-samples
-technical writing samples
+Below, is a list of technical writing samples from past projects
+
+- 
